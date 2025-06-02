@@ -12,15 +12,15 @@ logger.setLevel(logging.INFO)
 dynamodb = boto3.resource('dynamodb')
 dynamodb_client = boto3.client('dynamodb')
 
-def delete_item(table_name: str, key_name: str, key_value: Any, index_name: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+def delete_item(table_name: str, key_name: str, key_value: Any, index_name: str) -> Tuple[bool, Optional[str]]:
     """
-    Deletes an item from DynamoDB using either a primary key or a secondary index.
+    Deletes an item from DynamoDB using a secondary index.
     
     Args:
         table_name (str): Name of the DynamoDB table
         key_name (str): Name of the key attribute
         key_value (Any): Value of the key attribute
-        index_name (Optional[str]): Name of the index to use (if not provided, uses primary key)
+        index_name (str): Name of the index to use
         
     Returns:
         Tuple[bool, Optional[str]]: (success status, error message if any)
@@ -28,44 +28,36 @@ def delete_item(table_name: str, key_name: str, key_value: Any, index_name: Opti
     table = dynamodb.Table(table_name)
     
     try:
-        if index_name:
-            # If using an index, we need to query first to get the primary key
-            index = table.indexes[index_name]
-            response = table.query(
-                IndexName=index_name,
-                KeyConditionExpression=f"#{key_name} = :value",
-                ExpressionAttributeNames={
-                    f"#{key_name}": key_name
-                },
-                ExpressionAttributeValues={
-                    ":value": key_value
-                }
-            )
-            
-            items = response.get('Items', [])
-            if not items:
-                return False, f"No item found with {key_name} = {key_value} in index {index_name}"
-            
-            # Get the primary key from the found item
-            table_description = dynamodb_client.describe_table(TableName=table_name)
-            key_schema = table_description['Table']['KeySchema']
-            
-            # Build the key for deletion
-            delete_key = {}
-            for key in key_schema:
-                key_attr_name = key['AttributeName']
-                if key_attr_name not in items[0]:
-                    return False, f"Found item missing required key attribute: {key_attr_name}"
-                delete_key[key_attr_name] = items[0][key_attr_name]
-            
-            # Perform the delete using the primary key
-            table.delete_item(Key=delete_key)
-        else:
-            # Direct delete using primary key
-            table.delete_item(
-                Key={key_name: key_value}
-            )
+        # Query the index to get the item
+        response = table.query(
+            IndexName=index_name,
+            KeyConditionExpression=f"#{key_name} = :value",
+            ExpressionAttributeNames={
+                f"#{key_name}": key_name
+            },
+            ExpressionAttributeValues={
+                ":value": key_value
+            }
+        )
         
+        items = response.get('Items', [])
+        if not items:
+            return False, f"No item found with {key_name} = {key_value} in index {index_name}"
+        
+        # Get the primary key from the found item
+        table_description = dynamodb_client.describe_table(TableName=table_name)
+        key_schema = table_description['Table']['KeySchema']
+        
+        # Build the key for deletion
+        delete_key = {}
+        for key in key_schema:
+            key_attr_name = key['AttributeName']
+            if key_attr_name not in items[0]:
+                return False, f"Found item missing required key attribute: {key_attr_name}"
+            delete_key[key_attr_name] = items[0][key_attr_name]
+        
+        # Perform the delete using the primary key
+        table.delete_item(Key=delete_key)
         return True, None
             
     except ClientError as e:
@@ -86,7 +78,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         "table_name": "string",
         "key_name": "string",
         "key_value": "any",
-        "index_name": "string" (optional)
+        "index_name": "string"
     }
     """
     try:
