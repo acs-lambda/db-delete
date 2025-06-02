@@ -14,7 +14,7 @@ dynamodb_client = boto3.client('dynamodb')
 
 def delete_item(table_name: str, key_name: str, key_value: Any, index_name: str) -> Tuple[bool, Optional[str]]:
     """
-    Deletes an item from DynamoDB using a secondary index.
+    Deletes all items from DynamoDB that match the given key value using a secondary index.
     
     Args:
         table_name (str): Name of the DynamoDB table
@@ -28,7 +28,7 @@ def delete_item(table_name: str, key_name: str, key_value: Any, index_name: str)
     table = dynamodb.Table(table_name)
     
     try:
-        # Query the index to get the item
+        # Query the index to get all matching items
         response = table.query(
             IndexName=index_name,
             KeyConditionExpression=f"#{key_name} = :value",
@@ -42,23 +42,28 @@ def delete_item(table_name: str, key_name: str, key_value: Any, index_name: str)
         
         items = response.get('Items', [])
         if not items:
-            return False, f"No item found with {key_name} = {key_value} in index {index_name}"
+            return False, f"No items found with {key_name} = {key_value} in index {index_name}"
         
-        # Get the primary key from the found item
+        # Get the primary key schema
         table_description = dynamodb_client.describe_table(TableName=table_name)
         key_schema = table_description['Table']['KeySchema']
         
-        # Build the key for deletion
-        delete_key = {}
-        for key in key_schema:
-            key_attr_name = key['AttributeName']
-            if key_attr_name not in items[0]:
-                return False, f"Found item missing required key attribute: {key_attr_name}"
-            delete_key[key_attr_name] = items[0][key_attr_name]
+        # Delete all matching items
+        deleted_count = 0
+        for item in items:
+            # Build the key for deletion
+            delete_key = {}
+            for key in key_schema:
+                key_attr_name = key['AttributeName']
+                if key_attr_name not in item:
+                    return False, f"Found item missing required key attribute: {key_attr_name}"
+                delete_key[key_attr_name] = item[key_attr_name]
+            
+            # Perform the delete using the primary key
+            table.delete_item(Key=delete_key)
+            deleted_count += 1
         
-        # Perform the delete using the primary key
-        table.delete_item(Key=delete_key)
-        return True, None
+        return True, f"Successfully deleted {deleted_count} items"
             
     except ClientError as e:
         error_code = e.response['Error']['Code']
@@ -66,7 +71,7 @@ def delete_item(table_name: str, key_name: str, key_value: Any, index_name: str)
         logger.error(f"DynamoDB error: {error_code} - {error_msg}")
         return False, f"DynamoDB error: {error_msg}"
     except Exception as e:
-        error_msg = f"Error deleting item from {table_name}: {str(e)}"
+        error_msg = f"Error deleting items from {table_name}: {str(e)}"
         logger.error(error_msg)
         return False, error_msg
 
@@ -109,7 +114,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
         
         # Perform the delete
-        success, error_msg = delete_item(
+        success, message = delete_item(
             body['table_name'],
             body['key_name'],
             body['key_value'],
@@ -118,14 +123,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         if not success:
             return {
-                'statusCode': 404 if "No item found" in error_msg else 500,
-                'body': json.dumps({'error': error_msg})
+                'statusCode': 404 if "No items found" in message else 500,
+                'body': json.dumps({'error': message})
             }
         
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'message': 'Item deleted successfully'
+                'message': message
             })
         }
         
