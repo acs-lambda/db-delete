@@ -148,15 +148,18 @@ def lambda_handler(event, context):
         body = parsed_event.get('body', {})
         cookies = parsed_event.get('cookies', [])
         
-        session_cookie = next((cookie.split('=')[1] for cookie in cookies if cookie.startswith('session=')), None)
-        if not session_cookie:
-            raise LambdaError(401, "No session cookie provided.")
+        session_id = body.get('session_id')
+        if not session_id:
+            session_id = next((cookie.split('=')[1] for cookie in cookies if cookie.startswith('session=')), None)
+
+        if not session_id:
+            raise LambdaError(401, "No session ID provided in body or cookies.")
 
         required_fields = ['table_name', 'key_name', 'key_value', 'index_name', 'account_id']
         if any(field not in body for field in required_fields):
             raise LambdaError(400, "Missing one or more required fields.")
         
-        authorize(body['account_id'], session_cookie)
+        authorize(body['account_id'], session_id)
         
         message = delete_db_item(
             body['table_name'],
