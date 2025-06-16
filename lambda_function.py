@@ -86,7 +86,7 @@ import boto3
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 from config import logger
-from utils import create_response, LambdaError, parse_event, authorize
+from utils import create_response, LambdaError, parse_event, authorize, invoke_lambda
 
 dynamodb = boto3.resource('dynamodb')
 dynamodb_client = boto3.client('dynamodb')
@@ -159,7 +159,32 @@ def lambda_handler(event, context):
         if any(field not in body for field in required_fields):
             raise LambdaError(400, "Missing one or more required fields.")
         
-        authorize(body['account_id'], session_id)
+        if session_id != AUTH_BP:
+            authorize(body['account_id'], session_id)
+            # Check rate limit using the rate-limit Lambda
+            rate_limit_response = invoke_lambda('RateLimitAWS', {
+                'client_id': body['account_id'],
+                'session': session_id
+            })
+            
+            if rate_limit_response.get('statusCode') == 429:
+                logger.warning(f"Rate limit exceeded for account {body['account_id']}")
+                return create_response(429, {
+                    'error': 'Rate limit exceeded',
+                    'message': 'You have exceeded your AWS API rate limit. Please try again later.'
+                })
+            elif rate_limit_response.get('statusCode') == 401:
+                logger.warning(f"Unauthorized request for account {body['account_id']}")
+                return create_response(401, {
+                    'error': 'Unauthorized',
+                    'message': 'Invalid or expired session'
+                })
+            elif rate_limit_response.get('statusCode') != 200:
+                logger.error(f"Rate limit check failed: {rate_limit_response}")
+                return create_response(500, {
+                    'error': 'Rate limit check failed',
+                    'message': 'An error occurred while checking rate limits'
+                })
         
         message = delete_db_item(
             body['table_name'],
