@@ -146,10 +146,9 @@ def lambda_handler(event, context):
     try:
         parsed_event = parse_event(event)
         print(parsed_event)
-        body = parsed_event.get('body', {})
         cookies = parsed_event.get('cookies', [])
         
-        session_id = body.get('session_id')
+        session_id = cookies.get('session_id') or parsed_event.get('session_id')
         if not session_id:
             session_id = next((cookie.split('=')[1] for cookie in cookies if cookie.startswith('session=')), None)
 
@@ -157,25 +156,25 @@ def lambda_handler(event, context):
             raise LambdaError(401, "No session ID provided in body or cookies.")
 
         required_fields = ['table_name', 'key_name', 'key_value', 'index_name', 'account_id']
-        if any(field not in body for field in required_fields):
+        if any(field not in parsed_event for field in required_fields):
             raise LambdaError(400, "Missing one or more required fields.")
         
         if session_id != AUTH_BP:
-            authorize(body['account_id'], session_id)
+            authorize(parsed_event['account_id'], session_id)
             # Check rate limit using the rate-limit Lambda
             rate_limit_response = invoke_lambda('RateLimitAWS', {
-                'client_id': body['account_id'],
+                'client_id': parsed_event['account_id'],
                 'session': session_id
             })
             
             if rate_limit_response.get('statusCode') == 429:
-                logger.warning(f"Rate limit exceeded for account {body['account_id']}")
+                logger.warning(f"Rate limit exceeded for account {parsed_event['account_id']}")
                 return create_response(429, {
                     'error': 'Rate limit exceeded',
                     'message': 'You have exceeded your AWS API rate limit. Please try again later.'
                 })
             elif rate_limit_response.get('statusCode') == 401:
-                logger.warning(f"Unauthorized request for account {body['account_id']}")
+                logger.warning(f"Unauthorized request for account {parsed_event['account_id']}")
                 return create_response(401, {
                     'error': 'Unauthorized',
                     'message': 'Invalid or expired session'
@@ -188,11 +187,11 @@ def lambda_handler(event, context):
                 })
         
         message = delete_db_item(
-            body['table_name'],
-            body['key_name'],
-            body['key_value'],
-            body['index_name'],
-            body['account_id']
+            parsed_event['table_name'],
+            parsed_event['key_name'],
+            parsed_event['key_value'],
+            parsed_event['index_name'],
+            parsed_event['account_id']
         )
         
         return create_response(200, {"message": message})
