@@ -85,7 +85,7 @@ import json
 import boto3
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
-from config import logger
+from config import logger, AUTH_BP
 from utils import create_response, LambdaError, parse_event, authorize, invoke_lambda
 
 dynamodb = boto3.resource('dynamodb')
@@ -145,6 +145,7 @@ def delete_db_item(table_name, key_name, key_value, index_name, account_id):
 def lambda_handler(event, context):
     try:
         parsed_event = parse_event(event)
+        print(parsed_event)
         body = parsed_event.get('body', {})
         cookies = parsed_event.get('cookies', [])
         
